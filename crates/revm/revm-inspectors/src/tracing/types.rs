@@ -3,7 +3,7 @@
 use crate::tracing::{config::TraceStyle, utils::convert_memory};
 pub use alloy_primitives::Log;
 use alloy_primitives::{Address, Bytes, U256, U64};
-use alloy_sol_types::decode_revert_reason;
+use alloy_sol_types::GenericRevertReason;
 use reth_rpc_types::trace::{
     geth::{CallFrame, CallLogFrame, GethDefaultTracingOptions, StructLog},
     parity::{
@@ -348,8 +348,11 @@ impl CallTraceNode {
         // we need to populate error and revert reason
         if !self.trace.success {
             // decode the revert reason, but don't include it if it's empty
-            call_frame.revert_reason = decode_revert_reason(self.trace.output.as_ref())
-                .filter(|reason| !reason.is_empty());
+            call_frame.revert_reason = match GenericRevertReason::decode(self.trace.output.as_ref())
+            {
+                Some(revert_reason) => Some(revert_reason.to_string()),
+                None => None,
+            };
 
             // Note: the call tracer mimics parity's trace transaction and geth maps errors to parity style error messages, <https://github.com/ethereum/go-ethereum/blob/34d507215951fb3f4a5983b65e127577989a6db8/eth/tracers/native/call_flat.go#L39-L55>
             call_frame.error = self.trace.as_error_msg(TraceStyle::Parity);
@@ -580,12 +583,12 @@ impl CallTraceStep {
     pub(crate) fn is_calllike_op(&self) -> bool {
         matches!(
             self.op.get(),
-            opcode::CALL |
-                opcode::DELEGATECALL |
-                opcode::STATICCALL |
-                opcode::CREATE |
-                opcode::CALLCODE |
-                opcode::CREATE2
+            opcode::CALL
+                | opcode::DELEGATECALL
+                | opcode::STATICCALL
+                | opcode::CREATE
+                | opcode::CALLCODE
+                | opcode::CREATE2
         )
     }
 
@@ -686,7 +689,9 @@ mod tests {
 
     #[test]
     fn decode_empty_revert() {
-        let reason = decode_revert_reason("".as_bytes());
+        let reason = GenericRevertReason::decode("".as_bytes())
+            .and_then(|x| Some(x.to_string()));
+    
         assert_eq!(reason, Some("".to_string()));
     }
 }
